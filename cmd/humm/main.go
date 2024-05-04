@@ -71,8 +71,14 @@ func main() {
 
 	// load document and check status code
 	response, err := http.Get(urlRoot.String())
-	if response.StatusCode != 200 || err != nil {
-		fmt.Printf("error loading url %s received status code %d\n", urlRoot, response.StatusCode)
+	if err != nil {
+		fmt.Printf("error %v\n", err)
+		os.Exit(1)
+	}
+
+	// check for proper status
+	if response.StatusCode != 200 {
+		fmt.Printf("received status code %d\n", response.StatusCode)
 		os.Exit(1)
 	}
 
