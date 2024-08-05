@@ -6,6 +6,7 @@ import (
 	"github.com/antchfx/htmlquery"
 	"github.com/ryanfrishkorn/humm"
 	"golang.org/x/net/html"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -45,10 +46,10 @@ func main() {
 	cfg.Show200 = flag.Bool("200", false, "include urls with status code 200 in crawl report")
 	cfg.SortField = flag.String("s", "url", "sort by specified field <url|time>")
 	cfg.TimeResponse = flag.Bool("t", false, "print time elapsed between request and response")
-	cfg.Silent = flag.Bool("silent", false, "silence all standard output (errors still print to stderr)")
+	cfg.Silent = flag.Bool("silent", false, "silence all stdout, preserves stderr")
 
 	flag.Usage = func() {
-		fmt.Printf("usage: humm [flags] <url>\n")
+		print(os.Stderr, "usage: humm [flags] <url>\n")
 		flag.PrintDefaults()
 
 		os.Exit(1)
@@ -62,14 +63,14 @@ func main() {
 
 	// expect one argument for specifying path
 	if flag.NArg() != 1 {
-		fmt.Fprintf(os.Stderr, "error parsing arguments\n")
+		print(os.Stderr, "error parsing arguments\n")
 		flag.Usage()
 		os.Exit(1)
 	}
 
 	// create root url object to pass for other url construction
 	urlRoot, err := url.Parse(flag.Arg(0))
-	fmt.Printf("url: %s\n", urlRoot.String())
+	print(os.Stdout, "url: %s\n", urlRoot.String())
 
 	// for basic auth
 	if *cfg.User != "" && *cfg.Pass != "" {
@@ -80,7 +81,7 @@ func main() {
 		}
 
 		if containsHost(urlRoot.Host, allowedHosts) == false {
-			fmt.Printf("cannot add basic auth outside of %s\n", allowedHosts)
+			print(os.Stderr, "cannot add basic auth outside of %s\n", allowedHosts)
 			os.Exit(1)
 		}
 
@@ -91,20 +92,20 @@ func main() {
 	// load document and check status code
 	response, err := http.Get(urlRoot.String())
 	if err != nil {
-		fmt.Printf("error %v\n", err)
+		print(os.Stderr, "error %v\n", err)
 		os.Exit(1)
 	}
 
 	// check for proper status
 	if response.StatusCode != 200 {
-		fmt.Printf("received status code %d\n", response.StatusCode)
+		print(os.Stderr, "received status code %d\n", response.StatusCode)
 		os.Exit(1)
 	}
 
 	// parse
 	doc, err := htmlquery.Parse(response.Body)
 	if err != nil {
-		fmt.Printf("could not load url\n")
+		print(os.Stderr, "could not load url\n")
 		os.Exit(1)
 	}
 
@@ -123,9 +124,9 @@ func main() {
 	linksInternal, linksExternal := splitInternalExternalLinks(linksAll, urlRoot)
 
 	if *cfg.Verbose {
-		fmt.Printf("links_total: %d\n", len(linksAll))
-		fmt.Printf("links_internal_uniq: %d\n", len(linksInternal))
-		fmt.Printf("links_external_uniq: %d\n", len(linksExternal))
+		print(os.Stdout, "links_total: %d\n", len(linksAll))
+		print(os.Stdout, "links_internal_uniq: %d\n", len(linksInternal))
+		print(os.Stdout, "links_external_uniq: %d\n", len(linksExternal))
 	}
 
 	// truncate links before iteration if specified
@@ -144,7 +145,7 @@ func main() {
 
 			linkStats, err := humm.GetStatusCode(link, *cfg.HttpTimeout)
 			if err != nil {
-				fmt.Printf("could not get status code for %s\n", linkStats.Url.String())
+				print(os.Stderr, "could not get status code for %s\n", linkStats.Url.String())
 				os.Exit(1)
 			}
 
@@ -157,7 +158,7 @@ func main() {
 	summary.Results = make(map[int][]humm.LinkStats)
 
 	// read results from channel
-	fmt.Printf("crawling internal links: ")
+	print(os.Stdout, "crawling internal links: ")
 	count := 0
 	for range linksInternal {
 		stat := <-ch
@@ -167,10 +168,10 @@ func main() {
 		countPrevLen := len(fmt.Sprintf("%d/%d", count-1, len(linksInternal)))
 		if count != 1 {
 			for ; countPrevLen > 0; countPrevLen-- {
-				fmt.Fprintf(os.Stderr, "\b")
+				print(os.Stdout, "\b")
 			}
 		}
-		fmt.Fprintf(os.Stderr, "%d/%d", count, len(linksInternal))
+		print(os.Stdout, "%d/%d", count, len(linksInternal))
 		// check for presence of key
 		_, ok := summary.Results[stat.StatusCode]
 		if !ok {
@@ -180,8 +181,8 @@ func main() {
 		summary.Results[stat.StatusCode] = append(summary.Results[stat.StatusCode], stat)
 	}
 
-	fmt.Fprintf(os.Stderr, "\033[2K")
-	fmt.Fprintf(os.Stderr, "\r")
+	print(os.Stdout, "\033[2K")
+	print(os.Stdout, "\r")
 
 	statusKeys := make([]int, 0)
 
@@ -198,7 +199,7 @@ func main() {
 
 	// print summary
 	for _, statusKey := range statusKeys {
-		fmt.Printf("%d: %d\n", statusKey, len(summary.Results[statusKey]))
+		print(os.Stdout, "%d: %d\n", statusKey, len(summary.Results[statusKey]))
 		// sort async result urls for easy reading and comparison by default
 		if *cfg.SortField == "url" {
 			sort.Slice(summary.Results[statusKey], func(i int, j int) bool {
@@ -215,13 +216,23 @@ func main() {
 			stat.Url = humm.RemoveBasicAuth(stat.Url)
 			elapsed := stat.TimeResponse.Sub(stat.TimeRequest)
 			if *cfg.TimeResponse {
-				fmt.Printf(" - [%dms] %s [%s]\n", elapsed.Milliseconds(), stat.Url.String(), humm.DeterminePageType(stat.Url))
+				print(os.Stdout, " - [%dms] %s [%s]\n", elapsed.Milliseconds(), stat.Url.String(), humm.DeterminePageType(stat.Url))
 			} else {
-				fmt.Printf(" - %s [%s]\n", stat.Url.String(), humm.DeterminePageType(stat.Url))
+				print(os.Stdout, " - %s [%s]\n", stat.Url.String(), humm.DeterminePageType(stat.Url))
 			}
 		}
 	}
 	os.Exit(0)
+}
+
+// printCustom prints either to stdin or stderr honoring global silent configuration.
+func print(w io.Writer, msg string, a ...any) (n int) {
+	var bytes_written int
+
+	if !*cfg.Silent || w == os.Stderr {
+		bytes_written, _ = fmt.Fprintf(w, msg, a...)
+	}
+	return bytes_written
 }
 
 func containsHost(host string, allowedHosts []string) bool {
@@ -243,7 +254,7 @@ func gatherLinks(doc *html.Node) []url.URL {
 		linkAttr := htmlquery.SelectAttr(link, "href")
 		linkParsed, err := url.Parse(linkAttr)
 		if err != nil {
-			fmt.Printf("error parsing %s\n", linkAttr)
+			print(os.Stdout, "error parsing %s\n", linkAttr)
 			os.Exit(1)
 		}
 		// make absolute
