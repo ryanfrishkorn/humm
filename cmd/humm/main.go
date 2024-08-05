@@ -12,21 +12,40 @@ import (
 	"sort"
 )
 
+type Config struct {
+	Crawl        *bool
+	Help         *bool
+	HttpTimeout  *int
+	LinksLimit   *int
+	MaxThreads   *int
+	Pass         *string
+	Show200      *bool
+	Silent       *bool
+	SortField    *string
+	TimeResponse *bool
+	User         *string
+	Verbose      *bool
+}
+
+// GLOBAL configuration
+var cfg = Config{}
+
 func main() {
 	var basicAuth = false
 
 	// handle arguments and flags
-	flagHelp := flag.Bool("h", false, "print help message")
-	flagUser := flag.String("u", "", "username for basic auth")
-	flagPass := flag.String("p", "", "password for basic auth")
-	flagCrawl := flag.Bool("c", false, "crawl all links and report urls with non-200 status codes")
-	flagVerbose := flag.Bool("v", false, "verbose output of link counts")
-	flagHttpTimeout := flag.Int("timeout", 20, "specify timeout for http status codes")
-	flagLinksLimit := flag.Int("l", 0, "limit links to crawl")
-	flagMaxThreads := flag.Int("m", 10, "set concurrent crawl threads")
-	flagShow200 := flag.Bool("200", false, "include urls with status code 200 in crawl report")
-	flagSortField := flag.String("s", "url", "sort by specified field <url|time>")
-	flagTimeResponse := flag.Bool("t", false, "print time elapsed between request and response")
+	cfg.Help = flag.Bool("h", false, "print help message")
+	cfg.User = flag.String("u", "", "username for basic auth")
+	cfg.Pass = flag.String("p", "", "password for basic auth")
+	cfg.Crawl = flag.Bool("c", false, "crawl all links and report urls with non-200 status codes")
+	cfg.Verbose = flag.Bool("v", false, "verbose output of link counts")
+	cfg.HttpTimeout = flag.Int("timeout", 20, "specify timeout for http status codes")
+	cfg.LinksLimit = flag.Int("l", 0, "limit links to crawl")
+	cfg.MaxThreads = flag.Int("m", 10, "set concurrent crawl threads")
+	cfg.Show200 = flag.Bool("200", false, "include urls with status code 200 in crawl report")
+	cfg.SortField = flag.String("s", "url", "sort by specified field <url|time>")
+	cfg.TimeResponse = flag.Bool("t", false, "print time elapsed between request and response")
+	cfg.Silent = flag.Bool("silent", false, "silence all standard output (errors still print to stderr)")
 
 	flag.Usage = func() {
 		fmt.Printf("usage: humm [flags] <url>\n")
@@ -37,13 +56,13 @@ func main() {
 
 	flag.Parse()
 
-	if *flagHelp {
+	if *cfg.Help {
 		flag.Usage()
 	}
 
 	// expect one argument for specifying path
 	if flag.NArg() != 1 {
-		fmt.Printf("error parsing arguments\n")
+		fmt.Fprintf(os.Stderr, "error parsing arguments\n")
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -53,7 +72,7 @@ func main() {
 	fmt.Printf("url: %s\n", urlRoot.String())
 
 	// for basic auth
-	if *flagUser != "" && *flagPass != "" {
+	if *cfg.User != "" && *cfg.Pass != "" {
 		// use whitelist for hosts when adding basic auth to avoid user/pass leak
 		allowedHosts := []string{
 			"mystic.com",
@@ -65,7 +84,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		urlRoot.User = url.UserPassword(*flagUser, *flagPass)
+		urlRoot.User = url.UserPassword(*cfg.User, *cfg.Pass)
 		basicAuth = true
 	}
 
@@ -90,7 +109,7 @@ func main() {
 	}
 
 	// exit if we do not wish to crawl page links
-	if *flagCrawl == false {
+	if *cfg.Crawl == false {
 		os.Exit(0)
 	}
 
@@ -103,18 +122,18 @@ func main() {
 	// separate internal and external links (also removes duplicates)
 	linksInternal, linksExternal := splitInternalExternalLinks(linksAll, urlRoot)
 
-	if *flagVerbose {
+	if *cfg.Verbose {
 		fmt.Printf("links_total: %d\n", len(linksAll))
 		fmt.Printf("links_internal_uniq: %d\n", len(linksInternal))
 		fmt.Printf("links_external_uniq: %d\n", len(linksExternal))
 	}
 
 	// truncate links before iteration if specified
-	if *flagLinksLimit != 0 && len(linksInternal) > *flagLinksLimit {
-		linksInternal = linksInternal[:*flagLinksLimit] // only spider this many found links
+	if *cfg.LinksLimit != 0 && len(linksInternal) > *cfg.LinksLimit {
+		linksInternal = linksInternal[:*cfg.LinksLimit] // only spider this many found links
 	}
 
-	ch := make(chan humm.LinkStats, *flagMaxThreads)
+	ch := make(chan humm.LinkStats, *cfg.MaxThreads)
 	for _, link := range linksInternal {
 		// fetch response codes async
 		link := link
@@ -123,7 +142,7 @@ func main() {
 				link = humm.AddBasicAuth(link, *urlRoot)
 			}
 
-			linkStats, err := humm.GetStatusCode(link, *flagHttpTimeout)
+			linkStats, err := humm.GetStatusCode(link, *cfg.HttpTimeout)
 			if err != nil {
 				fmt.Printf("could not get status code for %s\n", linkStats.Url.String())
 				os.Exit(1)
@@ -181,7 +200,7 @@ func main() {
 	for _, statusKey := range statusKeys {
 		fmt.Printf("%d: %d\n", statusKey, len(summary.Results[statusKey]))
 		// sort async result urls for easy reading and comparison by default
-		if *flagSortField == "url" {
+		if *cfg.SortField == "url" {
 			sort.Slice(summary.Results[statusKey], func(i int, j int) bool {
 				return summary.Results[statusKey][i].Url.String() < summary.Results[statusKey][j].Url.String()
 			})
@@ -189,13 +208,13 @@ func main() {
 
 		for _, stat := range summary.Results[statusKey] {
 			// skip 200's listing if specified
-			if statusKey == 200 && *flagShow200 == false {
+			if statusKey == 200 && *cfg.Show200 == false {
 				continue
 			}
 
 			stat.Url = humm.RemoveBasicAuth(stat.Url)
 			elapsed := stat.TimeResponse.Sub(stat.TimeRequest)
-			if *flagTimeResponse {
+			if *cfg.TimeResponse {
 				fmt.Printf(" - [%dms] %s [%s]\n", elapsed.Milliseconds(), stat.Url.String(), humm.DeterminePageType(stat.Url))
 			} else {
 				fmt.Printf(" - %s [%s]\n", stat.Url.String(), humm.DeterminePageType(stat.Url))
