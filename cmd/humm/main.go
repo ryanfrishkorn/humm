@@ -20,7 +20,6 @@ type Config struct {
 	LinksLimit   *int
 	MaxThreads   *int
 	Pass         *string
-	Show200      *bool
 	Silent       *bool
 	SortField    *string
 	TimeResponse *bool
@@ -43,8 +42,7 @@ func main() {
 	cfg.HttpTimeout = flag.Int("timeout", 20, "specify timeout for http status codes")
 	cfg.LinksLimit = flag.Int("l", 0, "limit links to crawl")
 	cfg.MaxThreads = flag.Int("m", 10, "set concurrent crawl threads")
-	cfg.Show200 = flag.Bool("200", false, "include urls with status code 200 in crawl report")
-	cfg.SortField = flag.String("s", "url", "sort by specified field <url|time>")
+	cfg.SortField = flag.String("s", "url", "sort by specified field <url | time>")
 	cfg.TimeResponse = flag.Bool("t", false, "print time elapsed between request and response")
 	cfg.Silent = flag.Bool("silent", false, "silence all stdout, preserves stderr")
 
@@ -208,11 +206,6 @@ func main() {
 		}
 
 		for _, stat := range summary.Results[statusKey] {
-			// skip 200's listing if specified
-			if statusKey == 200 && *cfg.Show200 == false {
-				continue
-			}
-
 			stat.Url = humm.RemoveBasicAuth(stat.Url)
 			elapsed := stat.TimeResponse.Sub(stat.TimeRequest)
 			if *cfg.TimeResponse {
